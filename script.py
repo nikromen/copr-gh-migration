@@ -11,7 +11,7 @@ PAGURE_TOKEN = "pagure_token"
 GITHUB_TOKEN = "gh_token"
 
 BODY_TEMPLATE = "Original {what}: {link}\n" "Opened: {date}\n" "Opened by: {user}"
-
+PAGURE_USERNAME = "INSERT_USERNAME"
 
 SLEEP_SECONDS = 120
 LAST_KNOWN_ID_ON_GH = 30
@@ -64,7 +64,9 @@ class Transferator3000:
         ):
             issue.close()
 
-        print(f"created issue id {issue.id}")
+        with open("./skript_log.txt", "a") as out:
+            out.write(f"created issue id {issue.id}\n")
+
         sleep(SLEEP_SECONDS)
 
     def _create_issue(self, source_data: PagureIssue | PagurePullRequest) -> None:
@@ -125,15 +127,14 @@ def get_prs_json(issues: bool) -> JsonType:
 
 
 if __name__ == "__main__":
-
-    with open("/home/jkyjovsk/pagure_issues.json") as pg_issues_file:
+    with open("./pagure_issues.json") as pg_issues_file:
         pg_issues_data = load(pg_issues_file)
 
-    with open("/home/jkyjovsk/pagure_prs.json") as pg_prs_file:
+    with open("./pagure_prs.json") as pg_prs_file:
         pg_prs_data = load(pg_prs_file)
 
     # pass pagure username here
     transferator = Transferator3000(
-        "INSERT_USERNAME", pg_issues_data["issues"], pg_prs_data["requests"]
+        PAGURE_USERNAME, pg_issues_data["issues"], pg_prs_data["requests"]
     )
     transferator.transfer(LAST_KNOWN_ID_ON_GH)
