@@ -58,9 +58,9 @@ class Transferator3000:
     def _post_creation_of_issue(
         source_data: PagureIssue | PagurePullRequest, issue: GithubIssue
     ) -> None:
-        if not (
-            isinstance(source_data, PagureIssue)
-            and source_data.status == IssueStatus.closed
+        if (
+            isinstance(source_data, PagurePullRequest)
+            or source_data.status == IssueStatus.closed
         ):
             issue.close()
 
