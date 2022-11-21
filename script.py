@@ -109,6 +109,35 @@ class Transferator3000:
             self._create_issue(source_data)
 
 
+class TransferComments:
+    def __init__(self, username: str) -> None:
+        self.pagure_service = PagureService(
+            token=PAGURE_TOKEN, instance_url="https://pagure.io"
+        )
+
+        self.pagure_project = self.pagure_service.get_project(
+            namespace="copr", repo="copr", username=username
+        )
+
+    def comment_and_close_on_pagure(self) -> None:
+        opened_pagure_issues: list[PagureIssue] = self.pagure_project.get_issue_list(status=IssueStatus.open)
+        for pg_issue in opened_pagure_issues:
+            pg_issue.comment(
+                f"This issue has been migrated to GitHub: https://github.com/fedora-copr/copr/issues/{pg_issue.id}"
+            )
+
+            # ogr can't close with custom status so this is updated version of
+            # https://github.com/packit/ogr/blob/main/ogr/services/pagure/issue.py#L199
+            payload = {"status": "Closed", "close_status": "MIGRATED"}
+            pg_issue.project._call_project_api(
+                "issue", str(pg_issue.id), "status", data=payload, method="POST"
+            )
+            pg_issue.__dirty = True
+
+            with open("./skript_log.txt", "a") as out:
+                out.write(f"closed issue on pagure: {pg_issue.id}\n")
+
+
 def get_prs_json(issues: bool) -> JsonType:
     pagure_service = PagureService(token=PAGURE_TOKEN, instance_url="https://pagure.io")
     pagure_project = pagure_service.get_project(
@@ -127,14 +156,6 @@ def get_prs_json(issues: bool) -> JsonType:
 
 
 if __name__ == "__main__":
-    with open("./pagure_issues.json") as pg_issues_file:
-        pg_issues_data = load(pg_issues_file)
-
-    with open("./pagure_prs.json") as pg_prs_file:
-        pg_prs_data = load(pg_prs_file)
-
     # pass pagure username here
-    transferator = Transferator3000(
-        PAGURE_USERNAME, pg_issues_data["issues"], pg_prs_data["requests"]
-    )
-    transferator.transfer(LAST_KNOWN_ID_ON_GH)
+    transferator = TransferComments(PAGURE_USERNAME)
+    transferator.comment_and_close_on_pagure()
