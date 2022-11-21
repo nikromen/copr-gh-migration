@@ -1,5 +1,5 @@
 from time import sleep
-from json import load
+from json import load, dumps
 
 from ogr import GithubService, PagureService
 from ogr.abstract import IssueStatus, PRStatus
@@ -12,6 +12,7 @@ GITHUB_TOKEN = "gh_token"
 
 BODY_TEMPLATE = "Original {what}: {link}\n" "Opened: {date}\n" "Opened by: {user}"
 PAGURE_USERNAME = "INSERT_USERNAME"
+
 
 SLEEP_SECONDS = 120
 LAST_KNOWN_ID_ON_GH = 30
@@ -33,7 +34,7 @@ class Transferator3000:
         )
 
         self.gh_project = self.gh_service.get_project(
-            namespace="GH-test-bot", repo="copr"
+            namespace="fedora-copr", repo="copr"
         )
         self.pagure_project = self.pagure_service.get_project(
             namespace="copr", repo="copr", username=username
@@ -108,6 +109,34 @@ class Transferator3000:
 
             self._create_issue(source_data)
 
+    def _migrate_labels(self, pg_issue: PagureIssue) -> None:
+        labels = pg_issue.labels
+        if not labels:
+            return
+
+        gh_issue = self.gh_project.get_issue(pg_issue.id)
+        if gh_issue.labels:
+            return
+
+        gh_issue.add_label(*labels)
+        with open("./skript_log.txt", "a") as out:
+            out.write(f"migrated labels and assignees; issue id {gh_issue.id}\n")
+
+        sleep(SLEEP_SECONDS)
+
+    @staticmethod
+    def _is_migrated(issue: PagureIssue) -> bool:
+        return issue._raw_issue["close_status"].upper() == "MIGRATED"
+
+    def transfer_labels(self) -> None:
+        for pg_issue in self.pagure_issues.values():
+            if self._is_migrated(pg_issue):
+                self._migrate_labels(pg_issue)
+
+        for pg_issue in list(self.pagure_issues.values()):
+            if not self._is_migrated(pg_issue):
+                self._migrate_labels(pg_issue)
+
 
 class TransferComments:
     def __init__(self, username: str) -> None:
@@ -156,6 +185,14 @@ def get_prs_json(issues: bool) -> JsonType:
 
 
 if __name__ == "__main__":
+    with open("./pagure_issues.json") as pg_issues_file:
+        pg_issues_data = load(pg_issues_file)
+
+    with open("./pagure_prs.json") as pg_prs_file:
+        pg_prs_data = load(pg_prs_file)
+
     # pass pagure username here
-    transferator = TransferComments(PAGURE_USERNAME)
-    transferator.comment_and_close_on_pagure()
+    transferator = Transferator3000(
+        PAGURE_USERNAME, pg_issues_data["issues"], pg_prs_data["requests"]
+    )
+    transferator.transfer_labels()
