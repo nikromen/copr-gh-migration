@@ -12,10 +12,16 @@ GITHUB_TOKEN = "gh_token"
 
 BODY_TEMPLATE = "Original {what}: {link}\n" "Opened: {date}\n" "Opened by: {user}"
 PAGURE_USERNAME = "INSERT_USERNAME"
+DESCRIPTION_TEMPLATE = "\n\n{description}"
+COMMENT_TEMPLATE = (
+    "\n\n---\n\n#### [{user}](https://accounts.fedoraproject.org/user/{user})"
+    " commented at {date}:\n{comment}"
+)
 
 
 SLEEP_SECONDS = 120
 LAST_KNOWN_ID_ON_GH = 30
+FIRST_MIGRATED_ISSUE = 31
 
 
 JsonType = dict[str, "JsonType"] | dict[str, str]
@@ -40,13 +46,7 @@ class Transferator3000:
             namespace="copr", repo="copr", username=username
         )
 
-        self.pagure_prs = {
-            pr.id: pr
-            for pr in [
-                PagurePullRequest(pr_dict, self.pagure_project)
-                for pr_dict in pagure_prs_json
-            ]
-        }
+        self.pagure_prs = {}
         self.pagure_issues = {
             issue.id: issue
             for issue in [
@@ -137,6 +137,54 @@ class Transferator3000:
             if not self._is_migrated(pg_issue):
                 self._migrate_labels(pg_issue)
 
+    @staticmethod
+    def _get_pg_issue_content(issue: PagureIssue) -> str:
+        result = DESCRIPTION_TEMPLATE.format(description=issue.description)
+        comments = issue.get_comments()
+        for comment in comments:
+            if "This issue has been migrated to" in comment.body or "**Metadata Update from" in comment.body:
+                continue
+
+            result += COMMENT_TEMPLATE.format(
+                user=comment.author,
+                date=comment.created,
+                comment=comment.body,
+            )
+
+        return result
+
+    @staticmethod
+    def _already_migrated(gh_issue: GithubIssue, pg_issue_content: str) -> bool:
+        return pg_issue_content in gh_issue.description
+
+    @staticmethod
+    def _update_opened_by(original: str) -> str:
+        for line in original.splitlines():
+            if not "Opened by: " in line:
+                continue
+
+            user = line.split(":")[1].strip()
+            text_to_replace = f"Opened by: [{user}](https://accounts.fedoraproject.org/user/{user})"
+            return original.replace(line.strip(), text_to_replace)
+
+
+    def update_issues_content(self) -> None:
+        for pg_issue_id, pg_issue in self.pagure_issues.items():
+            if pg_issue_id < FIRST_MIGRATED_ISSUE:
+                continue
+
+            gh_issue = self.gh_project.get_issue(pg_issue_id)
+            assert gh_issue.id == pg_issue_id
+            pg_issue_content = self._get_pg_issue_content(pg_issue)
+            if self._already_migrated(gh_issue, pg_issue_content):
+                continue
+
+            gh_issue.description = self._update_opened_by(gh_issue.description) + pg_issue_content
+            with open("./skript_log.txt", "a") as out:
+                out.write(f"migrated issue content; issue id {gh_issue.id}\n")
+
+            sleep(SLEEP_SECONDS)
+
 
 class TransferComments:
     def __init__(self, username: str) -> None:
@@ -188,11 +236,8 @@ if __name__ == "__main__":
     with open("./pagure_issues.json") as pg_issues_file:
         pg_issues_data = load(pg_issues_file)
 
-    with open("./pagure_prs.json") as pg_prs_file:
-        pg_prs_data = load(pg_prs_file)
-
     # pass pagure username here
     transferator = Transferator3000(
-        PAGURE_USERNAME, pg_issues_data["issues"], pg_prs_data["requests"]
+        PAGURE_USERNAME, pg_issues_data["issues"], [{}]
     )
-    transferator.transfer_labels()
+    transferator.update_issues_content()
